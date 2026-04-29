@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Color Soundilizer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Helvetica Neue', sans-serif;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Layout constants
+// ─────────────────────────────────────────────────────────────────────────────
+const CW = 820, CH = 730;
+
+// Left panel - color picker
+const PICKER_X = 25, PICKER_Y = 60;
+const PICKER_SIZE = 220;
+const HUE_X = 25, HUE_Y = PICKER_Y + PICKER_SIZE + 12;
+const HUE_W = 220, HUE_H = 18;
+const SWATCH_X = 25, SWATCH_Y = HUE_Y + HUE_H + 14;
+const SWATCH_W = 220, SWATCH_H = 36;
+
+// Right panel - drawing area
+const DRAW_X = 280, DRAW_Y = 60;
+const DRAW_W = 515, DRAW_H = 515;
+const CLEAR_X = DRAW_X, CLEAR_Y = DRAW_Y + DRAW_H + 10;
+const CLEAR_W = 515, CLEAR_H = 32;
+
+// Player bar
+const PLAYER_Y = 640;
+const PLAYER_H = 80;
+
+// Record button
+const REC_BTN_X = 25, REC_BTN_Y = PLAYER_Y + 12;
+const REC_BTN_W = 90, REC_BTN_H = 26;
+
+// Playback controls
+const PLAY_BTN_X = 280, PLAY_BTN_Y = PLAYER_Y + 10;
+const PLAY_BTN_W = 32, PLAY_BTN_H = 26;
+const STOP_PB_BTN_X = 318, STOP_PB_BTN_Y = PLAYER_Y + 10;
+const STOP_PB_BTN_W = 32, STOP_PB_BTN_H = 26;
+
+// Progress bar
+const PROG_X = 360, PROG_Y = PLAYER_Y + 18;
+const PROG_W = 350, PROG_H = 8;
+
+// Time display
+const TIME_X = PROG_X + PROG_W + 8, TIME_Y = PLAYER_Y + 14;
+
+// Gallery / Save / Load (second row)
+const GAL_BTN_X = 280, GAL_BTN_Y = PLAYER_Y + 48;
+const GAL_BTN_W = 100, GAL_BTN_H = 24;
+const SAVE_BTN_X = 390, SAVE_BTN_Y = PLAYER_Y + 48;
+const SAVE_BTN_W = 80, SAVE_BTN_H = 24;
+const LOAD_BTN_X = 480, LOAD_BTN_Y = PLAYER_Y + 48;
+const LOAD_BTN_W = 80, LOAD_BTN_H = 24;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let hue = 200, saturation = 80, brightness = 90;
+let lastHue = -1;
+
+let pickerBuffer, hueBuffer, drawLayer;
+
+let isDraggingPicker = false;
+let isDraggingHue = false;
+let isDrawing = false;
+let isDraggingSize = false;
+
+// Tool state: "pen" | "eraser" | "fill"
+let currentTool = "pen";
+let brushSize = 4;
+const BG_COLOR = [245, 245, 240];
+
+// Tool panel layout
+const TOOLS_LABEL_Y = SWATCH_Y + SWATCH_H + 32;
+const TOOL_BTN_Y = TOOLS_LABEL_Y + 16;
+const TOOL_BTN_W = 68, TOOL_BTN_H = 26;
+const TOOL_PEN_X = PICKER_X;
+const TOOL_ERASER_X = PICKER_X + TOOL_BTN_W + 4;
+const SIZE_SLIDER_Y = TOOL_BTN_Y + TOOL_BTN_H + 14;
+const SIZE_SLIDER_X = PICKER_X;
+const SIZE_SLIDER_W = 220;
+const SIZE_SLIDER_H = 10;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio state
+// ─────────────────────────────────────────────────────────────────────────────
+let audioCtx = null;
+let oscillator = null;
+let masterGain = null;
+let stopTimeout = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App mode: "draw" | "recording" | "playing" | "paused"
+// ─────────────────────────────────────────────────────────────────────────────
+let appMode = "draw";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recording state
+// ─────────────────────────────────────────────────────────────────────────────
+let recordingStartTime = 0;
+let currentRecording = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Playback state
+// ─────────────────────────────────────────────────────────────────────────────
+let playbackRecording = null;
+let playbackStartTime = 0;
+let playbackPauseElapsed = 0;
+let playbackEventIndex = 0;
+let playbackSoundActive = false;
+let lastPlaybackRGB = [0, 0, 0];
+let lastPlaybackPos = null;  // ghost cursor {x, y}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gallery state
+// ─────────────────────────────────────────────────────────────────────────────
+let galleryOpen = false;
+let galleryScroll = 0;
+const STORAGE_KEY = "colorSoundilizer_recordings";
+
+// Flash notification
+let flashMsg = "";
+let flashTimer = 0;
+
+// Hidden file input for upload
+let fileInput = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility: HSB → RGB
+// ─────────────────────────────────────────────────────────────────────────────
+function hsbToRgb(h, s, b) {
+  s /= 100; b /= 100;
+  const k = n => (n + h / 60) % 6;
+  const f = n => b * (1 - s * Math.max(0, Math.min(k(n), 4 - k(n), 1)));
+  return [Math.round(f(5) * 255), Math.round(f(3) * 255), Math.round(f(1) * 255)];
+}
+
+function getCurrentRGB() {
+  return hsbToRgb(hue, saturation, brightness);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// p5.js sketch
+// ─────────────────────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(CW, CH);
+  pixelDensity(1);
+
+  pickerBuffer = createGraphics(PICKER_SIZE, PICKER_SIZE);
+  pickerBuffer.pixelDensity(1);
+
+  hueBuffer = createGraphics(HUE_W, HUE_H);
+  hueBuffer.pixelDensity(1);
+  buildHueBuffer();
+
+  drawLayer = createGraphics(DRAW_W, DRAW_H);
+  drawLayer.pixelDensity(1);
+  drawLayer.background(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+
+  buildPickerBuffer();
+  lastHue = hue;
+
+  // Create hidden file input for uploading recordings
+  fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json';
+  fileInput.style.display = 'none';
+  fileInput.addEventListener('change', handleFileUpload);
+  document.body.appendChild(fileInput);
+}
+
+function draw() {
+  background(28, 28, 46);
+
+  // Advance playback if playing
+  if (appMode === "playing") {
+    advancePlayback();
+  }
+
+  // Rebuild picker if hue changed
+  if (hue !== lastHue) {
+    buildPickerBuffer();
+    lastHue = hue;
+  }
+
+  drawLeftPanel();
+  drawRightPanel();
+  drawPlayerBar();
+
+  // Gallery overlay (drawn last so it's on top)
+  if (galleryOpen) {
+    drawGalleryDropdown();
+  }
+
+  // Flash notification
+  if (flashTimer > 0) {
+    flashTimer--;
+    drawFlash();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Buffer builders
+// ─────────────────────────────────────────────────────────────────────────────
+function buildPickerBuffer() {
+  pickerBuffer.loadPixels();
+  for (let x = 0; x < PICKER_SIZE; x++) {
+    const sat = (x / (PICKER_SIZE - 1)) * 100;
+    for (let y = 0; y < PICKER_SIZE; y++) {
+      const bri = (1 - y / (PICKER_SIZE - 1)) * 100;
+      const [r, g, b] = hsbToRgb(hue, sat, bri);
+      const idx = (y * PICKER_SIZE + x) * 4;
+      pickerBuffer.pixels[idx]     = r;
+      pickerBuffer.pixels[idx + 1] = g;
+      pickerBuffer.pixels[idx + 2] = b;
+      pickerBuffer.pixels[idx + 3] = 255;
+    }
+  }
+  pickerBuffer.updatePixels();
+}
+
+function buildHueBuffer() {
+  hueBuffer.loadPixels();
+  for (let x = 0; x < HUE_W; x++) {
+    const h = (x / (HUE_W - 1)) * 360;
+    const [r, g, b] = hsbToRgb(h, 100, 100);
+    for (let y = 0; y < HUE_H; y++) {
+      const idx = (y * HUE_W + x) * 4;
+      hueBuffer.pixels[idx]     = r;
+      hueBuffer.pixels[idx + 1] = g;
+      hueBuffer.pixels[idx + 2] = b;
+      hueBuffer.pixels[idx + 3] = 255;
+    }
+  }
+  hueBuffer.updatePixels();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawing: left panel
+// ─────────────────────────────────────────────────────────────────────────────
+function drawLeftPanel() {
+  // Title
+  fill(230);
+  noStroke();
+  textSize(18);
+  textStyle(BOLD);
+  textAlign(LEFT, TOP);
+  text('Color Soundilizer', PICKER_X, 22);
+
+  // Subtitle
+  fill(160);
+  textSize(11);
+  textStyle(NORMAL);
+  text('draw \u00b7 hear \u00b7 see', PICKER_X, 46);
+
+  // Picker square
+  image(pickerBuffer, PICKER_X, PICKER_Y);
+
+  // Picker border
+  noFill();
+  stroke(80);
+  strokeWeight(1);
+  rect(PICKER_X, PICKER_Y, PICKER_SIZE, PICKER_SIZE);
+
+  // Picker cursor
+  const cx = PICKER_X + (saturation / 100) * PICKER_SIZE;
+  const cy = PICKER_Y + (1 - brightness / 100) * PICKER_SIZE;
+  noFill();
+  stroke(255);
+  strokeWeight(2);
+  ellipse(cx, cy, 12, 12);
+  stroke(0, 0, 0, 120);
+  strokeWeight(1);
+  ellipse(cx, cy, 14, 14);
+
+  // Hue slider
+  image(hueBuffer, HUE_X, HUE_Y);
+  noFill();
+  stroke(80);
+  strokeWeight(1);
+  rect(HUE_X, HUE_Y, HUE_W, HUE_H);
+
+  // Hue slider handle
+  const hx = HUE_X + (hue / 360) * HUE_W;
+  fill(255);
+  stroke(80);
+  strokeWeight(1.5);
+  rect(hx - 5, HUE_Y - 3, 10, HUE_H + 6, 2);
+
+  // Color swatch
+  const [r, g, b] = getCurrentRGB();
+  fill(r, g, b);
+  stroke(80);
+  strokeWeight(1);
+  rect(SWATCH_X, SWATCH_Y, SWATCH_W, SWATCH_H, 4);
+
+  // RGB + waveform readout
+  fill(200);
+  noStroke();
+  textSize(10.5);
+  textAlign(LEFT, TOP);
+  const waveLabel = g < 85 ? 'sine' : g < 170 ? 'triangle' : 'sawtooth';
+  const freq = Math.round(map(r, 0, 255, 100, 800));
+  text(`R:${r}  G:${g}  B:${b}   |   ${freq} Hz \u00b7 ${waveLabel}`, SWATCH_X, SWATCH_Y + SWATCH_H + 10);
+
+  // Legend labels
+  fill(120);
+  textSize(9.5);
+  text('SAT \u2192', PICKER_X, PICKER_Y + PICKER_SIZE + 3);
+  push();
+  translate(PICKER_X - 14, PICKER_Y + PICKER_SIZE);
+  rotate(-HALF_PI);
+  text('BRI \u2192', 0, 0);
+  pop();
+
+  // ── Tool selector ──
+  fill(120);
+  noStroke();
+  textSize(9.5);
+  textAlign(LEFT, TOP);
+  text('TOOLS', PICKER_X, TOOLS_LABEL_Y);
+
+  const playbackActive = appMode === "playing" || appMode === "paused";
+  const tools = [
+    { id: "pen",    label: "PEN",    x: TOOL_PEN_X },
+    { id: "eraser", label: "ERASER", x: TOOL_ERASER_X }
+  ];
+  for (const t of tools) {
+    const isActive = currentTool === t.id;
+    const isHover = !playbackActive && inRect(mouseX, mouseY, t.x, TOOL_BTN_Y, TOOL_BTN_W, TOOL_BTN_H);
+    if (isActive) {
+      fill(60, 70, 110);
+    } else if (isHover) {
+      fill(55, 55, 75);
+    } else {
+      fill(40, 40, 58);
+    }
+    stroke(isActive ? color(100, 120, 200) : 70);
+    strokeWeight(1);
+    rect(t.x, TOOL_BTN_Y, TOOL_BTN_W, TOOL_BTN_H, 4);
+    fill(isActive ? 240 : (isHover ? 200 : 140));
+    noStroke();
+    textSize(9.5);
+    textAlign(CENTER, CENTER);
+    text(t.label, t.x + TOOL_BTN_W / 2, TOOL_BTN_Y + TOOL_BTN_H / 2);
+  }
+
+  // ── Brush size slider ──
+  {
+    fill(100);
+    noStroke();
+    textSize(9);
+    textAlign(LEFT, TOP);
+    text('SIZE: ' + brushSize + 'px', SIZE_SLIDER_X, SIZE_SLIDER_Y - 12);
+
+    // Track
+    fill(35, 35, 50);
+    noStroke();
+    rect(SIZE_SLIDER_X, SIZE_SLIDER_Y, SIZE_SLIDER_W, SIZE_SLIDER_H, 5);
+
+    // Fill
+    const sizePct = constrain((brushSize - 1) / 19, 0, 1);
+    fill(80, 120, 200);
+    rect(SIZE_SLIDER_X, SIZE_SLIDER_Y, SIZE_SLIDER_W * sizePct, SIZE_SLIDER_H, 5);
+
+    // Handle
+    const handleSX = SIZE_SLIDER_X + SIZE_SLIDER_W * sizePct;
+    fill(255);
+    stroke(100);
+    strokeWeight(1);
+    ellipse(handleSX, SIZE_SLIDER_Y + SIZE_SLIDER_H / 2, 14, 14);
+
+    // Preview circle
+    const previewY = SIZE_SLIDER_Y + SIZE_SLIDER_H + 18 + brushSize / 2;
+    if (currentTool === "eraser") {
+      fill(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+      stroke(150);
+      strokeWeight(1);
+    } else {
+      const [pr, pg, pb] = getCurrentRGB();
+      fill(pr, pg, pb);
+      noStroke();
+    }
+    ellipse(PICKER_X + 15 + brushSize / 2, previewY, brushSize, brushSize);
+  }
+
+  // Mode indicator below tools
+  if (appMode === "playing" || appMode === "paused") {
+    const modeY = SIZE_SLIDER_Y + SIZE_SLIDER_H + 50;
+    fill(100);
+    textSize(10);
+    textAlign(LEFT, TOP);
+    text('PLAYBACK MODE', SWATCH_X, modeY);
+    textSize(9);
+    fill(80);
+    text('Drawing disabled', SWATCH_X, modeY + 14);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawing: right panel
+// ─────────────────────────────────────────────────────────────────────────────
+function drawRightPanel() {
+  // Panel label
+  fill(200);
+  noStroke();
+  textSize(11);
+  textStyle(NORMAL);
+  textAlign(LEFT, TOP);
+  text('DRAW HERE', DRAW_X, 38);
+
+  // Sound indicator
+  if (isDrawing || playbackSoundActive) {
+    fill(120, 220, 120);
+    noStroke();
+    ellipse(DRAW_X + DRAW_W - 8, 44, 8, 8);
+    fill(180);
+    textSize(10);
+    textAlign(RIGHT, CENTER);
+    text('\u266a live', DRAW_X + DRAW_W - 14, 44);
+  }
+
+  // Recording indicator
+  if (appMode === "recording") {
+    const pulse = Math.sin(frameCount * 0.1) * 0.5 + 0.5;
+    fill(255, 60, 60, 150 + pulse * 105);
+    noStroke();
+    ellipse(DRAW_X + 80, 44, 8, 8);
+    fill(200, 80, 80);
+    textSize(10);
+    textAlign(LEFT, CENTER);
+    text('REC', DRAW_X + 88, 44);
+  }
+
+  // Drawing layer
+  image(drawLayer, DRAW_X, DRAW_Y);
+
+  // Ghost cursor during playback
+  if ((appMode === "playing" || appMode === "paused") && lastPlaybackPos) {
+    noFill();
+    stroke(255, 255, 255, 150);
+    strokeWeight(1.5);
+    ellipse(DRAW_X + lastPlaybackPos.x, DRAW_Y + lastPlaybackPos.y, 10, 10);
+    const [pr, pg, pb] = lastPlaybackRGB;
+    fill(pr, pg, pb);
+    noStroke();
+    ellipse(DRAW_X + lastPlaybackPos.x, DRAW_Y + lastPlaybackPos.y, 4, 4);
+  }
+
+  // Border
+  noFill();
+  stroke(70);
+  strokeWeight(1);
+  rect(DRAW_X, DRAW_Y, DRAW_W, DRAW_H);
+
+  // Clear button (disabled during playback)
+  const playbackActive = appMode === "playing" || appMode === "paused";
+  const isHoverClear = !playbackActive && mouseX >= CLEAR_X && mouseX <= CLEAR_X + CLEAR_W &&
+                       mouseY >= CLEAR_Y && mouseY <= CLEAR_Y + CLEAR_H;
+  fill(isHoverClear ? color(70, 70, 90) : color(45, 45, 65));
+  if (playbackActive) fill(35, 35, 50);
+  stroke(90);
+  strokeWeight(1);
+  rect(CLEAR_X, CLEAR_Y, CLEAR_W, CLEAR_H, 4);
+  fill(isHoverClear ? 230 : (playbackActive ? 80 : 160));
+  noStroke();
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  text('CLEAR', CLEAR_X + CLEAR_W / 2, CLEAR_Y + CLEAR_H / 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawing: player bar
+// ─────────────────────────────────────────────────────────────────────────────
+function drawPlayerBar() {
+  // Background strip
+  fill(22, 22, 38);
+  noStroke();
+  rect(0, PLAYER_Y - 4, CW, PLAYER_H + 8);
+
+  // Divider line
+  stroke(50);
+  strokeWeight(1);
+  line(0, PLAYER_Y - 4, CW, PLAYER_Y - 4);
+
+  // ── Record button ──
+  const isRec = appMode === "recording";
+  const canRecord = appMode === "draw" || appMode === "recording";
+  const hoverRec = canRecord && inRect(mouseX, mouseY, REC_BTN_X, REC_BTN_Y, REC_BTN_W, REC_BTN_H);
+
+  if (isRec) {
+    const pulse = Math.sin(frameCount * 0.08) * 0.3 + 0.7;
+    fill(120 * pulse, 30, 30);
+  } else if (hoverRec) {
+    fill(70, 40, 40);
+  } else {
+    fill(canRecord ? 55 : 35, canRecord ? 35 : 30, canRecord ? 35 : 30);
+  }
+  stroke(isRec ? color(180, 60, 60) : 80);
+  strokeWeight(1);
+  rect(REC_BTN_X, REC_BTN_Y, REC_BTN_W, REC_BTN_H, 4);
+
+  // Red dot
+  fill(isRec ? color(255, 80, 80) : (canRecord ? color(180, 60, 60) : color(80, 40, 40)));
+  noStroke();
+  ellipse(REC_BTN_X + 14, REC_BTN_Y + REC_BTN_H / 2, 8, 8);
+
+  // Label
+  fill(isRec ? 255 : (canRecord ? 180 : 80));
+  noStroke();
+  textSize(10);
+  textAlign(LEFT, CENTER);
+  text(isRec ? 'STOP REC' : 'RECORD', REC_BTN_X + 22, REC_BTN_Y + REC_BTN_H / 2);
+
+  // ── Play/Pause button ──
+  const hasRecording = playbackRecording !== null;
+  const canPlay = hasRecording && (appMode === "draw" || appMode === "playing" || appMode === "paused");
+  const hoverPlay = canPlay && inRect(mouseX, mouseY, PLAY_BTN_X, PLAY_BTN_Y, PLAY_BTN_W, PLAY_BTN_H);
+
+  fill(hoverPlay ? color(50, 70, 50) : (canPlay ? color(40, 55, 40) : color(35, 35, 40)));
+  stroke(canPlay ? 80 : 50);
+  strokeWeight(1);
+  rect(PLAY_BTN_X, PLAY_BTN_Y, PLAY_BTN_W, PLAY_BTN_H, 4);
+
+  fill(canPlay ? (hoverPlay ? 230 : 170) : 60);
+  noStroke();
+  if (appMode === "playing") {
+    // Pause icon
+    rect(PLAY_BTN_X + 10, PLAY_BTN_Y + 6, 4, 14);
+    rect(PLAY_BTN_X + 18, PLAY_BTN_Y + 6, 4, 14);
+  } else {
+    // Play triangle
+    triangle(
+      PLAY_BTN_X + 11, PLAY_BTN_Y + 5,
+      PLAY_BTN_X + 11, PLAY_BTN_Y + 21,
+      PLAY_BTN_X + 24, PLAY_BTN_Y + 13
+    );
+  }
+
+  // ── Stop playback button ──
+  const canStop = appMode === "playing" || appMode === "paused";
+  const hoverStop = canStop && inRect(mouseX, mouseY, STOP_PB_BTN_X, STOP_PB_BTN_Y, STOP_PB_BTN_W, STOP_PB_BTN_H);
+
+  fill(hoverStop ? color(70, 70, 90) : (canStop ? color(50, 50, 65) : color(35, 35, 40)));
+  stroke(canStop ? 80 : 50);
+  strokeWeight(1);
+  rect(STOP_PB_BTN_X, STOP_PB_BTN_Y, STOP_PB_BTN_W, STOP_PB_BTN_H, 4);
+
+  fill(canStop ? (hoverStop ? 230 : 170) : 60);
+  noStroke();
+  rect(STOP_PB_BTN_X + 10, STOP_PB_BTN_Y + 7, 12, 12);
+
+  // ── Progress bar ──
+  fill(35, 35, 50);
+  noStroke();
+  rect(PROG_X, PROG_Y, PROG_W, PROG_H, 4);
+
+  if (playbackRecording) {
+    const elapsed = getPlaybackElapsed();
+    const dur = playbackRecording.duration || 1;
+    const pct = constrain(elapsed / dur, 0, 1);
+    const barColor = lerpColor(color(80, 160, 255), color(255, 120, 80), pct);
+    fill(barColor);
+    noStroke();
+    rect(PROG_X, PROG_Y, PROG_W * pct, PROG_H, 4);
+
+    // Scrub handle
+    const handleX = PROG_X + PROG_W * pct;
+    fill(255);
+    stroke(100);
+    strokeWeight(1);
+    ellipse(handleX, PROG_Y + PROG_H / 2, 12, 12);
+  }
+
+  // ── Time display ──
+  fill(140);
+  noStroke();
+  textSize(10);
+  textAlign(LEFT, CENTER);
+  if (playbackRecording) {
+    const elapsed = getPlaybackElapsed();
+    const dur = playbackRecording.duration || 0;
+    text(formatTime(elapsed) + ' / ' + formatTime(dur), TIME_X, PROG_Y + PROG_H / 2);
+  } else {
+    text('--:-- / --:--', TIME_X, PROG_Y + PROG_H / 2);
+  }
+
+  // ── Gallery button ──
+  const hoverGal = inRect(mouseX, mouseY, GAL_BTN_X, GAL_BTN_Y, GAL_BTN_W, GAL_BTN_H);
+  fill(hoverGal ? color(60, 60, 80) : (galleryOpen ? color(55, 55, 75) : color(42, 42, 60)));
+  stroke(80);
+  strokeWeight(1);
+  rect(GAL_BTN_X, GAL_BTN_Y, GAL_BTN_W, GAL_BTN_H, 4);
+  fill(hoverGal ? 230 : 160);
+  noStroke();
+  textSize(10);
+  textAlign(CENTER, CENTER);
+  text(galleryOpen ? 'GALLERY \u25b2' : 'GALLERY \u25bc', GAL_BTN_X + GAL_BTN_W / 2, GAL_BTN_Y + GAL_BTN_H / 2);
+
+  // ── Save button ──
+  const canSave = playbackRecording !== null;
+  const hoverSave = canSave && inRect(mouseX, mouseY, SAVE_BTN_X, SAVE_BTN_Y, SAVE_BTN_W, SAVE_BTN_H);
+  fill(hoverSave ? color(60, 60, 80) : (canSave ? color(42, 42, 60) : color(32, 32, 42)));
+  stroke(canSave ? 80 : 50);
+  strokeWeight(1);
+  rect(SAVE_BTN_X, SAVE_BTN_Y, SAVE_BTN_W, SAVE_BTN_H, 4);
+  fill(canSave ? (hoverSave ? 230 : 160) : 70);
+  noStroke();
+  textSize(10);
+  textAlign(CENTER, CENTER);
+  text('DOWNLOAD', SAVE_BTN_X + SAVE_BTN_W / 2, SAVE_BTN_Y + SAVE_BTN_H / 2);
+
+  // ── Load button ──
+  const hoverLoad = inRect(mouseX, mouseY, LOAD_BTN_X, LOAD_BTN_Y, LOAD_BTN_W, LOAD_BTN_H);
+  fill(hoverLoad ? color(60, 60, 80) : color(42, 42, 60));
+  stroke(80);
+  strokeWeight(1);
+  rect(LOAD_BTN_X, LOAD_BTN_Y, LOAD_BTN_W, LOAD_BTN_H, 4);
+  fill(hoverLoad ? 230 : 160);
+  noStroke();
+  textSize(10);
+  textAlign(CENTER, CENTER);
+  text('UPLOAD', LOAD_BTN_X + LOAD_BTN_W / 2, LOAD_BTN_Y + LOAD_BTN_H / 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gallery dropdown
+// ─────────────────────────────────────────────────────────────────────────────
+function drawGalleryDropdown() {
+  const gallery = loadGallery();
+  const itemH = 32;
+  const maxVisible = 5;
+  const visibleCount = Math.min(gallery.length, maxVisible);
+  const dropH = gallery.length === 0 ? 40 : visibleCount * itemH + 8;
+  const dropX = GAL_BTN_X;
+  const dropY = GAL_BTN_Y - dropH - 4;
+  const dropW = 320;
+
+  // Background
+  fill(30, 30, 48);
+  stroke(70);
+  strokeWeight(1);
+  rect(dropX, dropY, dropW, dropH, 6);
+
+  if (gallery.length === 0) {
+    fill(100);
+    noStroke();
+    textSize(10);
+    textAlign(CENTER, CENTER);
+    text('No recordings yet', dropX + dropW / 2, dropY + dropH / 2);
+    return;
+  }
+
+  // Clipping region simulation: just draw the visible items
+  const startIdx = Math.max(0, Math.min(galleryScroll, gallery.length - maxVisible));
+  for (let i = 0; i < visibleCount; i++) {
+    const idx = startIdx + i;
+    if (idx >= gallery.length) break;
+    const rec = gallery[idx];
+    const iy = dropY + 4 + i * itemH;
+
+    // Hover highlight
+    const isHoverItem = inRect(mouseX, mouseY, dropX + 4, iy, dropW - 60, itemH);
+    if (isHoverItem) {
+      fill(45, 45, 70);
+      noStroke();
+      rect(dropX + 4, iy, dropW - 60, itemH, 3);
+    }
+
+    // Name
+    fill(isHoverItem ? 230 : 180);
+    noStroke();
+    textSize(10);
+    textAlign(LEFT, CENTER);
+    const displayName = rec.name.length > 22 ? rec.name.substring(0, 22) + '...' : rec.name;
+    text(displayName, dropX + 12, iy + itemH / 2);
+
+    // Duration
+    fill(100);
+    textSize(9);
+    textAlign(LEFT, CENTER);
+    text(formatTime(rec.duration), dropX + 190, iy + itemH / 2);
+
+    // Date
+    const d = new Date(rec.createdAt);
+    const dateStr = (d.getMonth() + 1) + '/' + d.getDate();
+    text(dateStr, dropX + 230, iy + itemH / 2);
+
+    // Delete X button
+    const delX = dropX + dropW - 30;
+    const isHoverDel = inRect(mouseX, mouseY, delX, iy + 4, 22, itemH - 8);
+    fill(isHoverDel ? color(200, 80, 80) : 90);
+    textSize(12);
+    textAlign(CENTER, CENTER);
+    text('\u2715', delX + 11, iy + itemH / 2);
+  }
+
+  // Scroll indicators
+  if (gallery.length > maxVisible) {
+    fill(80);
+    noStroke();
+    textSize(10);
+    textAlign(CENTER, CENTER);
+    if (startIdx > 0) {
+      text('\u25b2', dropX + dropW - 12, dropY + 10);
+    }
+    if (startIdx + maxVisible < gallery.length) {
+      text('\u25bc', dropX + dropW - 12, dropY + dropH - 10);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flash notification
+// ─────────────────────────────────────────────────────────────────────────────
+function drawFlash() {
+  const alpha = map(flashTimer, 0, 60, 0, 255);
+  fill(80, 200, 120, alpha);
+  noStroke();
+  rect(CW / 2 - 80, PLAYER_Y - 36, 160, 26, 6);
+  fill(255, 255, 255, alpha);
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  text(flashMsg, CW / 2, PLAYER_Y - 23);
+}
+
+function showFlash(msg) {
+  flashMsg = msg;
+  flashTimer = 90; // ~1.5 seconds at 60fps
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mouse interactions
+// ─────────────────────────────────────────────────────────────────────────────
+function mousePressed() {
+  // Close gallery if clicking outside it
+  if (galleryOpen) {
+    const gallery = loadGallery();
+    const itemH = 32;
+    const maxVisible = 5;
+    const visibleCount = Math.min(gallery.length, maxVisible);
+    const dropH = gallery.length === 0 ? 40 : visibleCount * itemH + 8;
+    const dropX = GAL_BTN_X;
+    const dropY = GAL_BTN_Y - dropH - 4;
+    const dropW = 320;
+
+    // Check if clicking inside gallery
+    if (inRect(mouseX, mouseY, dropX, dropY, dropW, dropH)) {
+      handleGalleryClick(mouseX, mouseY, gallery, dropX, dropY, dropW, itemH, maxVisible);
+      return;
+    }
+
+    // Check if clicking gallery button (toggle)
+    if (inRect(mouseX, mouseY, GAL_BTN_X, GAL_BTN_Y, GAL_BTN_W, GAL_BTN_H)) {
+      galleryOpen = false;
+      return;
+    }
+
+    // Clicking outside closes gallery
+    galleryOpen = false;
+    // Fall through to handle the click
+  }
+
+  // Player controls (always active)
+  if (handlePlayerClick()) return;
+
+  // Block drawing interactions during playback
+  if (appMode === "playing" || appMode === "paused") return;
+
+  // Tool buttons
+  if (inRect(mouseX, mouseY, TOOL_PEN_X, TOOL_BTN_Y, TOOL_BTN_W, TOOL_BTN_H)) {
+    currentTool = "pen"; return;
+  }
+  if (inRect(mouseX, mouseY, TOOL_ERASER_X, TOOL_BTN_Y, TOOL_BTN_W, TOOL_BTN_H)) {
+    currentTool = "eraser"; return;
+  }
+  // Size slider
+  if (inRect(mouseX, mouseY, SIZE_SLIDER_X - 7, SIZE_SLIDER_Y - 7, SIZE_SLIDER_W + 14, SIZE_SLIDER_H + 14)) {
+    isDraggingSize = true;
+    updateSizeFromMouse();
+    return;
+  }
+
+  // Picker square
+  if (inRect(mouseX, mouseY, PICKER_X, PICKER_Y, PICKER_SIZE, PICKER_SIZE)) {
+    isDraggingPicker = true;
+    updatePickerFromMouse();
+    return;
+  }
+  // Hue slider
+  if (inRect(mouseX, mouseY, HUE_X, HUE_Y - 4, HUE_W, HUE_H + 8)) {
+    isDraggingHue = true;
+    updateHueFromMouse();
+    return;
+  }
+  // Drawing canvas
+  if (inRect(mouseX, mouseY, DRAW_X, DRAW_Y, DRAW_W, DRAW_H)) {
+    isDrawing = true;
+    startSound();
+    const drawRGB = currentTool === "eraser" ? BG_COLOR : getCurrentRGB();
+    if (appMode === "recording") {
+      const t = Date.now() - recordingStartTime;
+      const [r, g, b] = getCurrentRGB();
+      currentRecording.events.push({
+        type: "strokeStart", t, rgb: drawRGB,
+        hue: hue, sat: saturation, bri: brightness,
+        tool: currentTool, size: brushSize
+      });
+    }
+    return;
+  }
+  // Clear button
+  if (inRect(mouseX, mouseY, CLEAR_X, CLEAR_Y, CLEAR_W, CLEAR_H)) {
+    drawLayer.background(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+    return;
+  }
+}
+
+function mouseDragged() {
+  if (isDraggingSize) {
+    updateSizeFromMouse();
+    return;
+  }
+  if (isDraggingPicker) {
+    updatePickerFromMouse();
+    if (isDrawing) updateSoundParams();
+  }
+  if (isDraggingHue) {
+    updateHueFromMouse();
+    if (isDrawing) updateSoundParams();
+  }
+  if (isDrawing) {
+    const drawRGB = currentTool === "eraser" ? BG_COLOR : getCurrentRGB();
+    const [r, g, b] = drawRGB;
+    drawLayer.strokeWeight(brushSize);
+    drawLayer.strokeCap(ROUND);
+    drawLayer.stroke(r, g, b);
+    drawLayer.line(
+      pmouseX - DRAW_X, pmouseY - DRAW_Y,
+      mouseX  - DRAW_X, mouseY  - DRAW_Y
+    );
+    // Record stroke move
+    if (appMode === "recording") {
+      const t = Date.now() - recordingStartTime;
+      currentRecording.events.push({
+        type: "strokeMove", t,
+        x1: pmouseX - DRAW_X, y1: pmouseY - DRAW_Y,
+        x2: mouseX - DRAW_X, y2: mouseY - DRAW_Y,
+        rgb: [r, g, b], size: brushSize
+      });
+    }
+  }
+}
+
+function mouseReleased() {
+  if (isDrawing) {
+    // Record stroke end
+    if (appMode === "recording") {
+      currentRecording.events.push({
+        type: "strokeEnd", t: Date.now() - recordingStartTime
+      });
+    }
+    stopSound();
+  }
+  isDraggingPicker = false;
+  isDraggingHue = false;
+  isDraggingSize = false;
+  isDrawing = false;
+}
+
+function mouseWheel(event) {
+  if (galleryOpen) {
+    const gallery = loadGallery();
+    if (gallery.length > 5) {
+      galleryScroll = constrain(galleryScroll + (event.delta > 0 ? 1 : -1), 0, gallery.length - 5);
+    }
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Player click handling
+// ─────────────────────────────────────────────────────────────────────────────
+function handlePlayerClick() {
+  // Record button
+  if (inRect(mouseX, mouseY, REC_BTN_X, REC_BTN_Y, REC_BTN_W, REC_BTN_H)) {
+    if (appMode === "draw") {
+      startRecording();
+      return true;
+    } else if (appMode === "recording") {
+      stopRecording();
+      return true;
+    }
+  }
+
+  // Play/Pause button
+  if (inRect(mouseX, mouseY, PLAY_BTN_X, PLAY_BTN_Y, PLAY_BTN_W, PLAY_BTN_H)) {
+    if (playbackRecording) {
+      if (appMode === "draw") {
+        startPlayback();
+        return true;
+      } else if (appMode === "playing") {
+        pausePlayback();
+        return true;
+      } else if (appMode === "paused") {
+        resumePlayback();
+        return true;
+      }
+    }
+  }
+
+  // Stop playback button
+  if (inRect(mouseX, mouseY, STOP_PB_BTN_X, STOP_PB_BTN_Y, STOP_PB_BTN_W, STOP_PB_BTN_H)) {
+    if (appMode === "playing" || appMode === "paused") {
+      stopPlayback();
+      return true;
+    }
+  }
+
+  // Progress bar (seek)
+  if (inRect(mouseX, mouseY, PROG_X, PROG_Y - 6, PROG_W, PROG_H + 12)) {
+    if (playbackRecording && (appMode === "playing" || appMode === "paused")) {
+      seekPlayback(mouseX);
+      return true;
+    }
+  }
+
+  // Gallery button
+  if (inRect(mouseX, mouseY, GAL_BTN_X, GAL_BTN_Y, GAL_BTN_W, GAL_BTN_H)) {
+    galleryOpen = !galleryOpen;
+    galleryScroll = 0;
+    return true;
+  }
+
+  // Save/Download button
+  if (inRect(mouseX, mouseY, SAVE_BTN_X, SAVE_BTN_Y, SAVE_BTN_W, SAVE_BTN_H)) {
+    if (playbackRecording) {
+      downloadRecording(playbackRecording);
+      return true;
+    }
+  }
+
+  // Load/Upload button
+  if (inRect(mouseX, mouseY, LOAD_BTN_X, LOAD_BTN_Y, LOAD_BTN_W, LOAD_BTN_H)) {
+    fileInput.click();
+    return true;
+  }
+
+  return false;
+}
+
+function handleGalleryClick(mx, my, gallery, dropX, dropY, dropW, itemH, maxVisible) {
+  const startIdx = Math.max(0, Math.min(galleryScroll, gallery.length - maxVisible));
+  const visibleCount = Math.min(gallery.length, maxVisible);
+
+  for (let i = 0; i < visibleCount; i++) {
+    const idx = startIdx + i;
+    if (idx >= gallery.length) break;
+    const iy = dropY + 4 + i * itemH;
+
+    // Delete button
+    const delX = dropX + dropW - 30;
+    if (inRect(mx, my, delX, iy + 4, 22, itemH - 8)) {
+      deleteRecording(gallery[idx].id);
+      if (playbackRecording && playbackRecording.id === gallery[idx].id) {
+        playbackRecording = null;
+        if (appMode === "playing" || appMode === "paused") {
+          stopPlayback();
+        }
+      }
+      return;
+    }
+
+    // Select item
+    if (inRect(mx, my, dropX + 4, iy, dropW - 60, itemH)) {
+      if (appMode === "playing" || appMode === "paused") {
+        stopPlayback();
+      }
+      playbackRecording = gallery[idx];
+      galleryOpen = false;
+      showFlash('Loaded: ' + gallery[idx].name);
+      return;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recording
+// ─────────────────────────────────────────────────────────────────────────────
+function startRecording() {
+  currentRecording = {
+    version: 1,
+    events: [],
+    name: "",
+    createdAt: Date.now(),
+    duration: 0
+  };
+  recordingStartTime = Date.now();
+  appMode = "recording";
+  // Clear canvas for fresh recording
+  drawLayer.background(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+}
+
+function stopRecording() {
+  if (!currentRecording) return;
+  currentRecording.duration = Date.now() - recordingStartTime;
+
+  // Generate a name
+  const gallery = loadGallery();
+  currentRecording.name = "Recording " + (gallery.length + 1);
+
+  // Stop any active sound
+  if (isDrawing) {
+    stopSound();
+    isDrawing = false;
+  }
+
+  // Save to localStorage
+  saveToGallery(currentRecording);
+  playbackRecording = currentRecording;
+  appMode = "draw";
+  showFlash('Saved!');
+  currentRecording = null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// localStorage
+// ─────────────────────────────────────────────────────────────────────────────
+function loadGallery() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveToGallery(recording) {
+  try {
+    const gallery = loadGallery();
+    recording.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    gallery.push(recording);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(gallery));
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      showFlash('Storage full! Delete old recordings.');
+    }
+  }
+}
+
+function deleteRecording(id) {
+  let gallery = loadGallery();
+  gallery = gallery.filter(r => r.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(gallery));
+  showFlash('Deleted');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Download / Upload
+// ─────────────────────────────────────────────────────────────────────────────
+function downloadRecording(rec) {
+  const json = JSON.stringify(rec, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (rec.name || 'recording') + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showFlash('Downloaded!');
+}
+
+function handleFileUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      const rec = JSON.parse(ev.target.result);
+      if (!rec.version || !Array.isArray(rec.events)) {
+        showFlash('Invalid recording file');
+        return;
+      }
+      saveToGallery(rec);
+      playbackRecording = rec;
+      showFlash('Uploaded: ' + (rec.name || 'Recording'));
+    } catch (err) {
+      showFlash('Failed to load file');
+    }
+  };
+  reader.readAsText(file);
+  fileInput.value = '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Playback engine
+// ─────────────────────────────────────────────────────────────────────────────
+function startPlayback() {
+  if (!playbackRecording || playbackRecording.events.length === 0) return;
+  ensureAudioContext();
+  appMode = "playing";
+  playbackEventIndex = 0;
+  playbackPauseElapsed = 0;
+  playbackStartTime = performance.now();
+  playbackSoundActive = false;
+  lastPlaybackPos = null;
+  lastPlaybackRGB = [0, 0, 0];
+  // Clear canvas
+  drawLayer.background(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+}
+
+function pausePlayback() {
+  playbackPauseElapsed += performance.now() - playbackStartTime;
+  if (playbackSoundActive) {
+    stopSound();
+    playbackSoundActive = false;
+  }
+  appMode = "paused";
+}
+
+function resumePlayback() {
+  ensureAudioContext();
+  playbackStartTime = performance.now();
+  appMode = "playing";
+
+  // If we were mid-stroke, restart sound
+  // Find the last strokeStart before current index
+  for (let i = playbackEventIndex - 1; i >= 0; i--) {
+    const ev = playbackRecording.events[i];
+    if (ev.type === "strokeEnd") break;
+    if (ev.type === "strokeStart") {
+      hue = ev.hue;
+      saturation = ev.sat;
+      brightness = ev.bri;
+      startSound();
+      playbackSoundActive = true;
+      break;
+    }
+  }
+}
+
+function stopPlayback() {
+  if (playbackSoundActive) {
+    stopSound();
+    playbackSoundActive = false;
+  }
+  appMode = "draw";
+  lastPlaybackPos = null;
+}
+
+function seekPlayback(mx) {
+  if (!playbackRecording) return;
+  const pct = constrain((mx - PROG_X) / PROG_W, 0, 1);
+  const targetTime = pct * playbackRecording.duration;
+
+  // Stop current sound
+  if (playbackSoundActive) {
+    stopSound();
+    playbackSoundActive = false;
+  }
+
+  // Clear and batch-replay all events up to targetTime
+  drawLayer.background(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+  playbackEventIndex = 0;
+  lastPlaybackPos = null;
+
+  const events = playbackRecording.events;
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].t > targetTime) {
+      playbackEventIndex = i;
+      break;
+    }
+    const ev = events[i];
+    if (ev.type === "strokeMove") {
+      drawLayer.strokeWeight(ev.size || 4);
+      drawLayer.strokeCap(ROUND);
+      drawLayer.stroke(ev.rgb[0], ev.rgb[1], ev.rgb[2]);
+      drawLayer.line(ev.x1, ev.y1, ev.x2, ev.y2);
+      lastPlaybackPos = { x: ev.x2, y: ev.y2 };
+      lastPlaybackRGB = ev.rgb;
+    } else if (ev.type === "strokeStart") {
+      hue = ev.hue;
+      saturation = ev.sat;
+      brightness = ev.bri;
+    }
+    if (i === events.length - 1) {
+      playbackEventIndex = events.length;
+    }
+  }
+
+  // Set timing state
+  playbackPauseElapsed = targetTime;
+  playbackStartTime = performance.now();
+
+  // If we landed mid-stroke, start sound
+  let midStroke = false;
+  for (let i = playbackEventIndex - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === "strokeEnd") break;
+    if (ev.type === "strokeStart") {
+      midStroke = true;
+      hue = ev.hue;
+      saturation = ev.sat;
+      brightness = ev.bri;
+      break;
+    }
+  }
+
+  if (appMode === "playing" && midStroke) {
+    startSound();
+    playbackSoundActive = true;
+  }
+}
+
+function getPlaybackElapsed() {
+  if (appMode === "playing") {
+    return performance.now() - playbackStartTime + playbackPauseElapsed;
+  } else if (appMode === "paused") {
+    return playbackPauseElapsed;
+  } else if (playbackRecording) {
+    return 0;
+  }
+  return 0;
+}
+
+function advancePlayback() {
+  if (!playbackRecording) return;
+  const elapsed = performance.now() - playbackStartTime + playbackPauseElapsed;
+  const events = playbackRecording.events;
+
+  while (playbackEventIndex < events.length && events[playbackEventIndex].t <= elapsed) {
+    const ev = events[playbackEventIndex];
+
+    switch (ev.type) {
+      case "strokeStart":
+        hue = ev.hue;
+        saturation = ev.sat;
+        brightness = ev.bri;
+        startSound();
+        playbackSoundActive = true;
+        lastPlaybackRGB = ev.rgb;
+        break;
+
+      case "strokeMove":
+        drawLayer.strokeWeight(ev.size || 4);
+        drawLayer.strokeCap(ROUND);
+        drawLayer.stroke(ev.rgb[0], ev.rgb[1], ev.rgb[2]);
+        drawLayer.line(ev.x1, ev.y1, ev.x2, ev.y2);
+        if (playbackSoundActive && oscillator) {
+          const freq = map(ev.rgb[0], 0, 255, 100, 800);
+          oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.05);
+        }
+        lastPlaybackPos = { x: ev.x2, y: ev.y2 };
+        lastPlaybackRGB = ev.rgb;
+        break;
+
+      case "strokeEnd":
+        stopSound();
+        playbackSoundActive = false;
+        break;
+
+    }
+    playbackEventIndex++;
+  }
+
+  // Check if playback is complete
+  if (playbackEventIndex >= events.length && elapsed >= playbackRecording.duration) {
+    if (playbackSoundActive) {
+      stopSound();
+      playbackSoundActive = false;
+    }
+    appMode = "draw";
+    lastPlaybackPos = null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+function formatTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Color update helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function updatePickerFromMouse() {
+  saturation = constrain(map(mouseX, PICKER_X, PICKER_X + PICKER_SIZE, 0, 100), 0, 100);
+  brightness = constrain(map(mouseY, PICKER_Y, PICKER_Y + PICKER_SIZE, 100, 0), 0, 100);
+}
+
+function updateHueFromMouse() {
+  hue = constrain(map(mouseX, HUE_X, HUE_X + HUE_W, 0, 360), 0, 360);
+}
+
+function updateSizeFromMouse() {
+  const pct = constrain((mouseX - SIZE_SLIDER_X) / SIZE_SLIDER_W, 0, 1);
+  brushSize = Math.round(1 + pct * 19); // 1–20
+}
+
+
+function inRect(x, y, rx, ry, rw, rh) {
+  return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio
+// ─────────────────────────────────────────────────────────────────────────────
+function ensureAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function getWaveType(g) {
+  if (g < 85)  return 'sine';
+  if (g < 170) return 'triangle';
+  return 'sawtooth';
+}
+
+function startSound() {
+  ensureAudioContext();
+  if (stopTimeout) { clearTimeout(stopTimeout); stopTimeout = null; }
+
+  if (oscillator) {
+    try { oscillator.stop(); } catch (e) {}
+    oscillator = null;
+  }
+
+  const [r, g, b] = getCurrentRGB();
+  const freq      = map(r, 0, 255, 100, 800);
+  const waveType  = getWaveType(g);
+  const delayTime = map(b, 0, 255, 0, 0.45);
+  const wetAmt    = map(b, 0, 255, 0, 0.65);
+
+  oscillator      = audioCtx.createOscillator();
+  masterGain      = audioCtx.createGain();
+  const dryGain   = audioCtx.createGain();
+  const wetGain   = audioCtx.createGain();
+  const delayNode = audioCtx.createDelay(1.0);
+  const fbGain    = audioCtx.createGain();
+
+  oscillator.type           = waveType;
+  oscillator.frequency.value = freq;
+  masterGain.gain.value     = 0.0;
+  dryGain.gain.value        = 1 - wetAmt * 0.4;
+  wetGain.gain.value        = wetAmt;
+  delayNode.delayTime.value = delayTime;
+  fbGain.gain.value         = 0.38;
+
+  oscillator.connect(masterGain);
+  masterGain.connect(dryGain);
+  masterGain.connect(delayNode);
+  delayNode.connect(fbGain);
+  fbGain.connect(delayNode);
+  delayNode.connect(wetGain);
+  dryGain.connect(audioCtx.destination);
+  wetGain.connect(audioCtx.destination);
+
+  oscillator.start();
+  masterGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
+}
+
+function stopSound() {
+  if (!masterGain || !oscillator) return;
+  const osc = oscillator;
+  const gain = masterGain;
+  gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.08);
+  stopTimeout = setTimeout(() => {
+    try { osc.stop(); } catch (e) {}
+    stopTimeout = null;
+  }, 400);
+  oscillator = null;
+  masterGain = null;
+}
+
+function updateSoundParams() {
+  if (!oscillator || !masterGain) return;
+  const [r, g, b] = getCurrentRGB();
+  const freq = map(r, 0, 255, 100, 800);
+  oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.05);
+}
+</script>
+</body>
+</html>

@@ -2,18 +2,17 @@
 
 _By Adam Hacker_
 
-<!-- HERO IMAGE: Add a screenshot or photo of the app here -->
-<!-- ![Color Soundilizer](images/hero.png) -->
-
 > A creative tool that connects color to sound :)
 
 ---
 
 ## Showcase / Description of Finished Piece
 
-<!-- Add screenshots or a screen recording of the app in action here -->
 
-**Full Demo Video:** TO BE ADDED<!-- [Link to video]() -->
+**Full Demo Video:** 
+
+https://github.com/user-attachments/assets/f77e9ecf-255f-4296-9a3d-90089b3c3e60
+
 
 Color Soundilizer is an interactive web app where drawing and sound are tied together, 1:1. Use an HSB color picker and then draw on the canvas. As you paint, the web app synthesizes a tone for you to hear. Hue maps to pitch, with saturation and brightness managing the timbre. The result is a connection between both the visual and audible dimensions of your life.
 
@@ -29,14 +28,15 @@ The app includes a full **recording and playback system**, where you can capture
 - Save/load recordings to localStorage; export and import as `.json` files
 - In-app gallery to browse and re-open saved recordings
 
+**Setup:**
+
+The project is contained entirely within one HTML file. Download ![index.html](index.html) and open inside a browser to use!
+
 ---
 
 ## Process
 
 ### Ideation / Design Process
-
-<!-- Add sketches, mood board, inspiration images, early wireframes here -->
-<!-- ![Sketch 1](images/sketch1.png) ![Reference](images/reference.png) -->
 
 This project started by asking the question: what 2 dimensions can I connect that normally aren't?
 
@@ -45,9 +45,6 @@ My initial thinking brought me to the neurological phenomenon "synesthesia", whe
 I first thought about using pre-recorded sounds or samples, but after realising that I can map color to sound in a 1:1 mapping, I decided to synthesize the audio live.
 
 ### Prototyping / Building Process
-
-<!-- Add in-progress screenshots, prototype photos, iteration images here -->
-<!-- ![Early prototype](images/proto1.png) ![Iteration](images/proto2.png) -->
 
 The project was built as a single self-contained HTML file using **p5.js** for rendering and the browser's native **Web Audio API** for synthesis. This allows practically any device to run this code.
 
@@ -68,10 +65,6 @@ The screenshot above shows a finalized version of my project, which includes the
 ---
 
 ## Conclusion / Reflection
-
-<!-- You can also add images or video clips here that capture the feeling of the piece -->
-
-<!-- [Write your reflection here] -->
 
 With this piece, I really wanted to create a tool where the user could create their own artwork to give to others. However, I knew I had to "unlock" a new dimension of expression that isn't typically availble. For me, this was the connection between color and sound.
 
